@@ -1,7 +1,7 @@
 use clap::{App, Arg, ArgMatches, SubCommand};
 use failure::Fallible;
 
-use crate::imp::init as imp;
+use crate::imp::create as imp;
 
 pub const COMMAND_NAME: &str = "atcoder";
 

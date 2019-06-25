@@ -1,7 +1,7 @@
 use clap::{App, AppSettings, ArgMatches, SubCommand};
 use failure::Fallible;
 
-pub const COMMAND_NAME: &str = "init";
+pub const COMMAND_NAME: &str = "create";
 
 mod atcoder;
 

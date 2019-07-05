@@ -1,6 +1,7 @@
-use clap::{App, AppSettings, SubCommand};
+use clap::{App, AppSettings};
 use failure::Fallible;
 
+pub mod addcase;
 pub mod create;
 
 pub fn main() -> Fallible<()> {
@@ -9,11 +10,12 @@ pub fn main() -> Fallible<()> {
         .author("statiolake <statiolake@gmail.com>")
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .subcommand(create::clap_subcommand())
-        .subcommand(SubCommand::with_name("addcase"));
+        .subcommand(addcase::clap_subcommand());
     let matches = app.get_matches();
 
     match matches.subcommand() {
         (create::COMMAND_NAME, Some(sub)) => create::run(sub),
+        (addcase::COMMAND_NAME, Some(sub)) => addcase::run(sub),
         _ => unreachable!("Unreachable.  This is a bug."),
     }
 }

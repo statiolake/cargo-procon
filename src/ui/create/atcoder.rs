@@ -1,7 +1,7 @@
 use clap::{App, Arg, ArgMatches, SubCommand};
 use failure::Fallible;
 
-use crate::imp::create as imp;
+use crate::imp::create::atcoder as imp;
 
 pub const COMMAND_NAME: &str = "atcoder";
 
@@ -14,5 +14,5 @@ pub fn run(atcoder: &ArgMatches) -> Fallible<()> {
         .value_of("NAME")
         .expect("Argument marked as required was not found.  This is a bug.");
 
-    imp::atcoder::run(name)
+    imp::run(name)
 }

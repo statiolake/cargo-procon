@@ -1,9 +1,40 @@
-use failure::Fallible;
 use failure::{ensure, format_err};
+use failure::{Error, Fallible};
+use failure_derive::Fail;
+use std::io;
 use std::path::{Path, PathBuf};
 
 const TEST_FILE: &str = "tests/sample_case.rs";
 const TEST_MACRO: &str = "procontest::testcase!(id: $id);";
+
+#[derive(Debug, Fail)]
+#[fail(display = "Failed to determine next id.")]
+pub struct NextIdError(#[fail(cause)] Error);
+
+#[derive(Debug, Fail)]
+#[fail(display = "Failed to add a new testcase.")]
+pub struct AddcaseError(#[fail(cause)] AddcaseErrorKind);
+
+#[derive(Debug, Fail)]
+pub enum AddcaseErrorKind {
+    #[fail(display = "File `{}` cannot be removed.", path_str)]
+    RemovingFileFailed {
+        #[fail(cause)]
+        cause: io::Error,
+
+        path_str: String,
+    },
+
+    #[fail(display = "File `{}` already exists.", path_str)]
+    FileAlreadyExists { path_str: String },
+}
+
+#[derive(Debug, Fail)]
+#[fail(display = "Failed to delete the testcase.")]
+pub struct DelcaseError(#[fail(cause)] DelcaseErrorKind);
+
+#[derive(Debug, Fail)]
+pub enum DelcaseErrorKind {}
 
 /*
    For `tests/t**_in.txt`,
@@ -13,8 +44,8 @@ const TEST_MACRO: &str = "procontest::testcase!(id: $id);";
    the `file_name` is `t**_in.txt`,
    the `file_path` is `tests/t**_in.txt`,
 */
-pub fn next_id() -> Fallible<String> {
-    ensure_tests_dir_exists()?;
+pub fn next_id() -> Result<String, NextIdError> {
+    ensure_tests_dir_exists().map_err(NextIdError)?;
 
     let next_id = (1..)
         .map(default_id)
@@ -24,18 +55,34 @@ pub fn next_id() -> Fallible<String> {
     Ok(next_id)
 }
 
-pub fn addcase(id: &str, force: bool, input: &str, output: &str) -> Fallible<()> {
+pub fn addcase(id: &str, force: bool, input: &str, output: &str) -> Result<(), AddcaseError> {
     use std::fs::remove_file;
 
     let in_path = in_file_path(id);
     let out_path = out_file_path(id);
 
     if force && in_path.exists() {
-        remove_file(&in_path)?;
+        remove_file(&in_path).map_err(|cause| {
+            AddcaseError(AddcaseErrorKind::RemovingFileFailed {
+                cause,
+                path_str: in_path.display().to_string(),
+            })
+        })?;
     }
 
     if force && out_path.exists() {
-        remove_file(&out_path)?;
+        remove_file(&out_path).map_err(|cause| {
+            AddcaseError(AddcaseErrorKind::RemovingFileFailed {
+                cause,
+                path_str: out_path.display().to_string(),
+            })
+        })?;
+    }
+
+    if in_path.exists() {
+        return AddcaseError(AddcaseErrorKind::FileAlreadyExists {
+            path_str: in_path.display().to_string(),
+        });
     }
 
     ensure!(
@@ -58,6 +105,10 @@ pub fn addcase(id: &str, force: bool, input: &str, output: &str) -> Fallible<()>
 }
 
 pub fn delcase(id: &str) -> Fallible<()> {
+    delcase_impl(id).map_err(|e| DelcaseError(e).into())
+}
+
+fn delcase_impl(id: &str) -> Fallible<()> {
     use std::fs::remove_file;
 
     // Find the testcase

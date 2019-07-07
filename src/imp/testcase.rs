@@ -208,7 +208,7 @@ fn add_to_testfile(id: &str) -> Result<(), WriteTestfileErrorKind> {
         .open(path)
         .map_err(to_err)?;
 
-    file.write_all(content.as_bytes()).map_err(to_err)?;
+    writeln!(file, "{}", content).map_err(to_err)?;
 
     Ok(())
 }
@@ -225,19 +225,14 @@ fn remove_from_testfile(id: &str) -> Result<(), WriteTestfileErrorKind> {
         path_str: path.display().to_string(),
     };
 
-    let entries: Vec<_> = read_to_string(path)
-        .map_err(to_err)?
-        .lines()
-        .filter(|&entry| entry != content)
-        .map(|entry| format!("{}\n", entry))
-        .collect();
+    let entries = read_to_string(path).map_err(to_err)?;
+    let entries = entries.lines().filter(|&entry| entry != content);
 
-    OpenOptions::new()
-        .write(true)
-        .open(path)
-        .map_err(to_err)?
-        .write_all(entries.join("").as_bytes())
-        .map_err(to_err)?;
+    let mut file = OpenOptions::new().write(true).open(path).map_err(to_err)?;
+
+    for entry in entries {
+        writeln!(file, "{}", entry).map_err(to_err)?;
+    }
 
     Ok(())
 }

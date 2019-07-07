@@ -14,5 +14,5 @@ pub fn run(matches: &ArgMatches) -> Fallible<()> {
         .value_of("NAME")
         .expect("Required argument does not found.  This is a bug.");
 
-    imp::delcase(&name)
+    imp::delcase(&name).map_err(Into::into)
 }

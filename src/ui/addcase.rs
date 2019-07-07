@@ -16,7 +16,7 @@ pub fn run(matches: &ArgMatches) -> Fallible<()> {
     let input = read("input")?;
     let output = read("output")?;
 
-    imp::addcase(&name, false, &input, &output)
+    imp::addcase(&name, false, &input, &output).map_err(Into::into)
 }
 
 fn read(prompt: &str) -> Fallible<String> {

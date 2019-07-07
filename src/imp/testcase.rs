@@ -1,5 +1,3 @@
-use failure::{ensure, format_err};
-use failure::{Error, Fallible};
 use failure_derive::Fail;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -9,7 +7,13 @@ const TEST_MACRO: &str = "procontest::testcase!(id: $id);";
 
 #[derive(Debug, Fail)]
 #[fail(display = "Failed to determine next id.")]
-pub struct NextIdError(#[fail(cause)] Error);
+pub struct NextIdError(#[fail(cause)] NextIdErrorKind);
+
+#[derive(Debug, Fail)]
+pub enum NextIdErrorKind {
+    #[fail(display = "Failed to create `tests` dir.")]
+    CreateTestsDirFailed(#[fail(cause)] io::Error),
+}
 
 #[derive(Debug, Fail)]
 #[fail(display = "Failed to add a new testcase.")]
@@ -17,7 +21,7 @@ pub struct AddcaseError(#[fail(cause)] AddcaseErrorKind);
 
 #[derive(Debug, Fail)]
 pub enum AddcaseErrorKind {
-    #[fail(display = "File `{}` cannot be removed.", path_str)]
+    #[fail(display = "Failed to remove file `{}`", path_str)]
     RemovingFileFailed {
         #[fail(cause)]
         cause: io::Error,
@@ -27,6 +31,12 @@ pub enum AddcaseErrorKind {
 
     #[fail(display = "File `{}` already exists.", path_str)]
     FileAlreadyExists { path_str: String },
+
+    #[fail(display = "Writing a testcase failed.")]
+    WritingTestcaseFailed(#[fail(cause)] io::Error),
+
+    #[fail(display = "Writing to testfile failed.")]
+    WritingTestfileFailed(#[fail(cause)] WriteTestfileErrorKind),
 }
 
 #[derive(Debug, Fail)]
@@ -34,7 +44,30 @@ pub enum AddcaseErrorKind {
 pub struct DelcaseError(#[fail(cause)] DelcaseErrorKind);
 
 #[derive(Debug, Fail)]
-pub enum DelcaseErrorKind {}
+pub enum DelcaseErrorKind {
+    #[fail(display = "Failed to remove file `{}`.", path_str)]
+    RemovingFileFailed {
+        #[fail(cause)]
+        cause: io::Error,
+        path_str: String,
+    },
+
+    #[fail(display = "Failed to shift succeeding testcases.")]
+    ShiftFailed(#[fail(cause)] io::Error),
+
+    #[fail(display = "Writing to testfile failed.")]
+    WritingTestfileFailed(#[fail(cause)] WriteTestfileErrorKind),
+}
+
+#[derive(Debug, Fail)]
+pub enum WriteTestfileErrorKind {
+    #[fail(display = "IO Error for path `{}`", path_str)]
+    IOError {
+        #[fail(cause)]
+        cause: io::Error,
+        path_str: String,
+    },
+}
 
 /*
    For `tests/t**_in.txt`,
@@ -45,7 +78,9 @@ pub enum DelcaseErrorKind {}
    the `file_path` is `tests/t**_in.txt`,
 */
 pub fn next_id() -> Result<String, NextIdError> {
-    ensure_tests_dir_exists().map_err(NextIdError)?;
+    ensure_tests_dir_exists()
+        .map_err(NextIdErrorKind::CreateTestsDirFailed)
+        .map_err(NextIdError)?;
 
     let next_id = (1..)
         .map(default_id)
@@ -56,75 +91,69 @@ pub fn next_id() -> Result<String, NextIdError> {
 }
 
 pub fn addcase(id: &str, force: bool, input: &str, output: &str) -> Result<(), AddcaseError> {
+    addcase_impl(id, force, input, output).map_err(AddcaseError)
+}
+
+fn addcase_impl(id: &str, force: bool, input: &str, output: &str) -> Result<(), AddcaseErrorKind> {
     use std::fs::remove_file;
 
     let in_path = in_file_path(id);
     let out_path = out_file_path(id);
+    let to_removing_err = |cause: io::Error| AddcaseErrorKind::RemovingFileFailed {
+        cause,
+        path_str: in_path.display().to_string(),
+    };
 
     if force && in_path.exists() {
-        remove_file(&in_path).map_err(|cause| {
-            AddcaseError(AddcaseErrorKind::RemovingFileFailed {
-                cause,
-                path_str: in_path.display().to_string(),
-            })
-        })?;
+        remove_file(&in_path).map_err(to_removing_err)?;
     }
 
     if force && out_path.exists() {
-        remove_file(&out_path).map_err(|cause| {
-            AddcaseError(AddcaseErrorKind::RemovingFileFailed {
-                cause,
-                path_str: out_path.display().to_string(),
-            })
-        })?;
+        remove_file(&out_path).map_err(to_removing_err)?;
     }
 
     if in_path.exists() {
-        return AddcaseError(AddcaseErrorKind::FileAlreadyExists {
+        return Err(AddcaseErrorKind::FileAlreadyExists {
             path_str: in_path.display().to_string(),
         });
     }
 
-    ensure!(
-        !in_path.exists(),
-        "Input file path `{}` already exists.",
-        in_path.display()
-    );
+    if out_path.exists() {
+        return Err(AddcaseErrorKind::FileAlreadyExists {
+            path_str: out_path.display().to_string(),
+        });
+    }
 
-    ensure!(
-        !out_path.exists(),
-        "Output file path `{}` already exists.",
-        out_path.display()
-    );
-
-    write_testcase(&in_path, input)?;
-    write_testcase(&out_path, output)?;
-    add_testcase_to_file(id)?;
+    write_testcase(&in_path, input).map_err(AddcaseErrorKind::WritingTestcaseFailed)?;
+    write_testcase(&out_path, output).map_err(AddcaseErrorKind::WritingTestcaseFailed)?;
+    add_testcase_to_file(id).map_err(AddcaseErrorKind::WritingTestfileFailed)?;
 
     Ok(())
 }
 
-pub fn delcase(id: &str) -> Fallible<()> {
-    delcase_impl(id).map_err(|e| DelcaseError(e).into())
+pub fn delcase(id: &str) -> Result<(), DelcaseError> {
+    delcase_impl(id).map_err(DelcaseError)
 }
 
-fn delcase_impl(id: &str) -> Fallible<()> {
+fn delcase_impl(id: &str) -> Result<(), DelcaseErrorKind> {
     use std::fs::remove_file;
 
     // Find the testcase
     let in_path = in_file_path(id);
     let out_path = out_file_path(id);
+    let to_removing_err = |cause: io::Error| DelcaseErrorKind::RemovingFileFailed {
+        cause,
+        path_str: in_path.display().to_string(),
+    };
 
     // Remove them
-    remove_file(&in_path)
-        .map_err(|e| format_err!("failed to remove `{}`: {}", in_path.display(), e))?;
-    remove_file(&out_path)
-        .map_err(|e| format_err!("failed to remove `{}`: {}", out_path.display(), e))?;
-    remove_testcase_from_file(id)?;
+    remove_file(&in_path).map_err(to_removing_err)?;
+    remove_file(&out_path).map_err(to_removing_err)?;
+    remove_testcase_from_file(id).map_err(DelcaseErrorKind::WritingTestfileFailed)?;
 
-    // if the testcase is a numbered one, shift the following testcases.
+    // if the testcase is a numbered one, shift the succeeding testcases.
     if let Some(idx) = index_of_id(id) {
-        shift_testcase_to(idx)?;
+        shift_testcase_to(idx).map_err(DelcaseErrorKind::ShiftFailed)?;
     }
 
     Ok(())
@@ -150,7 +179,7 @@ fn out_file_path(id: &str) -> PathBuf {
     PathBuf::from(format!("tests/{}_out.txt", id))
 }
 
-fn write_testcase(path: &Path, data: &str) -> Fallible<()> {
+fn write_testcase(path: &Path, data: &str) -> io::Result<()> {
     use std::fs::File;
     use std::io::prelude::*;
     use std::io::BufWriter;
@@ -161,36 +190,43 @@ fn write_testcase(path: &Path, data: &str) -> Fallible<()> {
     Ok(())
 }
 
-fn add_testcase_to_file(id: &str) -> Fallible<()> {
+fn add_testcase_to_file(id: &str) -> Result<(), WriteTestfileErrorKind> {
     use std::fs::OpenOptions;
     use std::io::prelude::*;
 
     let content = TEST_MACRO.replace("$id", id);
     let path = Path::new(TEST_FILE);
 
+    let to_err = |cause: io::Error| WriteTestfileErrorKind::IOError {
+        cause,
+        path_str: path.display().to_string(),
+    };
+
     let mut file = OpenOptions::new()
         .append(true)
         .create(true)
         .open(path)
-        .map_err(|e| format_err!("Cannot open the test file `{}`: {}.", path.display(), e))?;
+        .map_err(to_err)?;
 
-    file.write_all(content.as_bytes())
-        .map_err(|e| format_err!("Cannot write to the test file `{}`: {}", path.display(), e))?;
+    file.write_all(content.as_bytes()).map_err(to_err)?;
 
     Ok(())
 }
 
-fn remove_testcase_from_file(id: &str) -> Fallible<()> {
+fn remove_testcase_from_file(id: &str) -> Result<(), WriteTestfileErrorKind> {
     use std::fs::read_to_string;
     use std::fs::OpenOptions;
     use std::io::prelude::*;
 
     let content = TEST_MACRO.replace("$id", id);
     let path = Path::new(TEST_FILE);
-    let disp = path.display();
+    let to_err = |cause: io::Error| WriteTestfileErrorKind::IOError {
+        cause,
+        path_str: path.display().to_string(),
+    };
 
     let entries: Vec<_> = read_to_string(path)
-        .map_err(|e| format_err!("Cannot open the test file `{}`: `{}`", disp, e))?
+        .map_err(to_err)?
         .lines()
         .filter(|&entry| entry != content)
         .map(|entry| format!("{}\n", entry))
@@ -199,14 +235,14 @@ fn remove_testcase_from_file(id: &str) -> Fallible<()> {
     OpenOptions::new()
         .write(true)
         .open(path)
-        .map_err(|e| format_err!("Cannot open the test file `{}`: `{}`", disp, e))?
+        .map_err(to_err)?
         .write_all(entries.join("").as_bytes())
-        .map_err(|e| format_err!("Failed to write the test file `{}`: `{}`", disp, e))?;
+        .map_err(to_err)?;
 
     Ok(())
 }
 
-fn shift_testcase_to(idx: usize) -> Fallible<()> {
+fn shift_testcase_to(idx: usize) -> Result<(), io::Error> {
     use std::fs::{copy, remove_file};
     for i in idx.. {
         let orig_in = in_file_path(&default_id(i + 1));
@@ -240,9 +276,9 @@ fn shift_testcase_to(idx: usize) -> Fallible<()> {
     Ok(())
 }
 
-fn ensure_tests_dir_exists() -> Fallible<()> {
+fn ensure_tests_dir_exists() -> Result<(), io::Error> {
     use std::fs::create_dir_all;
-    create_dir_all("tests").map_err(|e| format_err!("Cannot create `tests` directory: {}", e))?;
+    create_dir_all("tests")?;
     Ok(())
 }
 

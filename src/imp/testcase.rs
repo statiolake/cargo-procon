@@ -84,7 +84,7 @@ pub fn next_id() -> Result<String, NextIdError> {
 
     let next_id = (1..)
         .map(default_id)
-        .find(|cand| !in_file_path(cand).exists() && !out_file_path(cand).exists())
+        .find(|cand| !testcase_in_path(cand).exists() && !testcase_out_path(cand).exists())
         .expect("infinite iterator has run out.  This is of course a bug.");
 
     Ok(next_id)
@@ -97,8 +97,8 @@ pub fn addcase(id: &str, force: bool, input: &str, output: &str) -> Result<(), A
 fn addcase_impl(id: &str, force: bool, input: &str, output: &str) -> Result<(), AddcaseErrorKind> {
     use std::fs::remove_file;
 
-    let in_path = in_file_path(id);
-    let out_path = out_file_path(id);
+    let in_path = testcase_in_path(id);
+    let out_path = testcase_out_path(id);
     let to_removing_err = |cause: io::Error| AddcaseErrorKind::RemovingFileFailed {
         cause,
         path_str: in_path.display().to_string(),
@@ -126,7 +126,7 @@ fn addcase_impl(id: &str, force: bool, input: &str, output: &str) -> Result<(), 
 
     write_testcase(&in_path, input).map_err(AddcaseErrorKind::WritingTestcaseFailed)?;
     write_testcase(&out_path, output).map_err(AddcaseErrorKind::WritingTestcaseFailed)?;
-    add_testcase_to_file(id).map_err(AddcaseErrorKind::WritingTestfileFailed)?;
+    add_to_testfile(id).map_err(AddcaseErrorKind::WritingTestfileFailed)?;
 
     Ok(())
 }
@@ -139,8 +139,8 @@ fn delcase_impl(id: &str) -> Result<(), DelcaseErrorKind> {
     use std::fs::remove_file;
 
     // Find the testcase
-    let in_path = in_file_path(id);
-    let out_path = out_file_path(id);
+    let in_path = testcase_in_path(id);
+    let out_path = testcase_out_path(id);
     let to_removing_err = |cause: io::Error| DelcaseErrorKind::RemovingFileFailed {
         cause,
         path_str: in_path.display().to_string(),
@@ -149,7 +149,7 @@ fn delcase_impl(id: &str) -> Result<(), DelcaseErrorKind> {
     // Remove them
     remove_file(&in_path).map_err(to_removing_err)?;
     remove_file(&out_path).map_err(to_removing_err)?;
-    remove_testcase_from_file(id).map_err(DelcaseErrorKind::WritingTestfileFailed)?;
+    remove_from_testfile(id).map_err(DelcaseErrorKind::WritingTestfileFailed)?;
 
     // if the testcase is a numbered one, shift the succeeding testcases.
     if let Some(idx) = index_of_id(id) {
@@ -171,11 +171,11 @@ fn index_of_id(id: &str) -> Option<usize> {
     id[1..].parse().ok()
 }
 
-fn in_file_path(id: &str) -> PathBuf {
+fn testcase_in_path(id: &str) -> PathBuf {
     PathBuf::from(format!("tests/{}_in.txt", id))
 }
 
-fn out_file_path(id: &str) -> PathBuf {
+fn testcase_out_path(id: &str) -> PathBuf {
     PathBuf::from(format!("tests/{}_out.txt", id))
 }
 
@@ -190,7 +190,7 @@ fn write_testcase(path: &Path, data: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn add_testcase_to_file(id: &str) -> Result<(), WriteTestfileErrorKind> {
+fn add_to_testfile(id: &str) -> Result<(), WriteTestfileErrorKind> {
     use std::fs::OpenOptions;
     use std::io::prelude::*;
 
@@ -213,7 +213,7 @@ fn add_testcase_to_file(id: &str) -> Result<(), WriteTestfileErrorKind> {
     Ok(())
 }
 
-fn remove_testcase_from_file(id: &str) -> Result<(), WriteTestfileErrorKind> {
+fn remove_from_testfile(id: &str) -> Result<(), WriteTestfileErrorKind> {
     use std::fs::read_to_string;
     use std::fs::OpenOptions;
     use std::io::prelude::*;
@@ -245,10 +245,10 @@ fn remove_testcase_from_file(id: &str) -> Result<(), WriteTestfileErrorKind> {
 fn shift_testcase_to(idx: usize) -> Result<(), io::Error> {
     use std::fs::{copy, remove_file};
     for i in idx.. {
-        let orig_in = in_file_path(&default_id(i + 1));
-        let orig_out = out_file_path(&default_id(i + 1));
-        let dest_in = in_file_path(&default_id(i));
-        let dest_out = out_file_path(&default_id(i));
+        let orig_in = testcase_in_path(&default_id(i + 1));
+        let orig_out = testcase_out_path(&default_id(i + 1));
+        let dest_in = testcase_in_path(&default_id(i));
+        let dest_out = testcase_out_path(&default_id(i));
 
         assert!(
             !dest_in.exists() && !dest_out.exists(),

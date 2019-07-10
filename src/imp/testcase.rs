@@ -36,7 +36,7 @@ pub enum AddcaseErrorKind {
     WritingTestcaseFailed(#[fail(cause)] io::Error),
 
     #[fail(display = "Writing to testfile failed.")]
-    WritingTestfileFailed(#[fail(cause)] WriteTestfileErrorKind),
+    UpdatingTestfileFailed(#[fail(cause)] UpdatingTestfileErrorKind),
 }
 
 #[derive(Debug, Fail)]
@@ -55,12 +55,18 @@ pub enum DelcaseErrorKind {
     #[fail(display = "Failed to shift succeeding testcases.")]
     ShiftFailed(#[fail(cause)] io::Error),
 
-    #[fail(display = "Writing to testfile failed.")]
-    WritingTestfileFailed(#[fail(cause)] WriteTestfileErrorKind),
+    #[fail(display = "Updating the testfile failed.")]
+    UpdatingTestfileFailed(#[fail(cause)] UpdatingTestfileErrorKind),
 }
 
 #[derive(Debug, Fail)]
-pub enum WriteTestfileErrorKind {
+pub enum UpdatingTestfileErrorKind {
+    #[fail(display = "Failed to read directory `{}`", path_str)]
+    ReadDirError {
+        #[fail(cause)]
+        cause: io::Error,
+        path_str: String,
+    },
     #[fail(display = "IO Error for path `{}`", path_str)]
     IOError {
         #[fail(cause)]
@@ -126,7 +132,7 @@ fn addcase_impl(id: &str, force: bool, input: &str, output: &str) -> Result<(), 
 
     write_testcase(&in_path, input).map_err(AddcaseErrorKind::WritingTestcaseFailed)?;
     write_testcase(&out_path, output).map_err(AddcaseErrorKind::WritingTestcaseFailed)?;
-    add_to_testfile(id).map_err(AddcaseErrorKind::WritingTestfileFailed)?;
+    update_testfile().map_err(AddcaseErrorKind::UpdatingTestfileFailed)?;
 
     Ok(())
 }
@@ -149,12 +155,13 @@ fn delcase_impl(id: &str) -> Result<(), DelcaseErrorKind> {
     // Remove them
     remove_file(&in_path).map_err(to_removing_err)?;
     remove_file(&out_path).map_err(to_removing_err)?;
-    remove_from_testfile(id).map_err(DelcaseErrorKind::WritingTestfileFailed)?;
 
     // if the testcase is a numbered one, shift the succeeding testcases.
     if let Some(idx) = index_of_id(id) {
         shift_testcase_to(idx).map_err(DelcaseErrorKind::ShiftFailed)?;
     }
+
+    update_testfile().map_err(DelcaseErrorKind::UpdatingTestfileFailed)?;
 
     Ok(())
 }
@@ -190,49 +197,38 @@ fn write_testcase(path: &Path, data: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn add_to_testfile(id: &str) -> Result<(), WriteTestfileErrorKind> {
-    use std::fs::OpenOptions;
-    use std::io::prelude::*;
+fn update_testfile() -> Result<(), UpdatingTestfileErrorKind> {
+    use std::fs;
+    let file_path = Path::new(TEST_FILE);
+    let dir_path = file_path
+        .parent()
+        .expect("Failed to get the test directory path.  This is a bug.");
 
-    let content = TEST_MACRO.replace("$id", id);
-    let path = Path::new(TEST_FILE);
+    let testcases = fs::read_dir(dir_path)
+        .map_err(|cause| UpdatingTestfileErrorKind::ReadDirError {
+            cause,
+            path_str: dir_path.display().to_string(),
+        })?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let file_name = entry.file_name().into_string().ok()?;
+            if file_name.ends_with("_in.txt") {
+                Some(file_name[0..file_name.len() - 7].to_string())
+            } else {
+                None
+            }
+        });
 
-    let to_err = |cause: io::Error| WriteTestfileErrorKind::IOError {
+    let testcases: Vec<_> = testcases
+        .map(|entry| TEST_MACRO.replace("$id", &entry))
+        .map(|entry| format!("{}\n", entry))
+        .collect();
+    let testcases = testcases.join("");
+
+    fs::write(file_path, testcases).map_err(|cause| UpdatingTestfileErrorKind::IOError {
         cause,
-        path_str: path.display().to_string(),
-    };
-
-    let mut file = OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(path)
-        .map_err(to_err)?;
-
-    writeln!(file, "{}", content).map_err(to_err)?;
-
-    Ok(())
-}
-
-fn remove_from_testfile(id: &str) -> Result<(), WriteTestfileErrorKind> {
-    use std::fs::read_to_string;
-    use std::fs::OpenOptions;
-    use std::io::prelude::*;
-
-    let content = TEST_MACRO.replace("$id", id);
-    let path = Path::new(TEST_FILE);
-    let to_err = |cause: io::Error| WriteTestfileErrorKind::IOError {
-        cause,
-        path_str: path.display().to_string(),
-    };
-
-    let entries = read_to_string(path).map_err(to_err)?;
-    let entries = entries.lines().filter(|&entry| entry != content);
-
-    let mut file = OpenOptions::new().write(true).open(path).map_err(to_err)?;
-
-    for entry in entries {
-        writeln!(file, "{}", entry).map_err(to_err)?;
-    }
+        path_str: file_path.display().to_string(),
+    })?;
 
     Ok(())
 }

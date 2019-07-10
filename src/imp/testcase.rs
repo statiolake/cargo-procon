@@ -21,6 +21,13 @@ pub struct AddcaseError(#[fail(cause)] AddcaseErrorKind);
 
 #[derive(Debug, Fail)]
 pub enum AddcaseErrorKind {
+    #[fail(
+        display = "Invalid id: `{}`\n\n  note: the id must be starts with an alphabet \
+                   and all of characters must be an alphanumeric or underscore '_'.",
+        id
+    )]
+    InvalidId { id: String },
+
     #[fail(display = "Failed to remove file `{}`", path_str)]
     RemovingFileFailed {
         #[fail(cause)]
@@ -101,6 +108,12 @@ pub fn addcase(id: &str, force: bool, input: &str, output: &str) -> Result<(), A
 }
 
 fn addcase_impl(id: &str, force: bool, input: &str, output: &str) -> Result<(), AddcaseErrorKind> {
+    // Validation: the testcase id must consist of alphanumerics.  In addition, the first character
+    // must be an alphabet.
+    if !is_valid_id(id) {
+        return Err(AddcaseErrorKind::InvalidId { id: id.to_string() });
+    }
+
     use std::fs::remove_file;
 
     let in_path = testcase_in_path(id);
@@ -164,6 +177,17 @@ fn delcase_impl(id: &str) -> Result<(), DelcaseErrorKind> {
     update_testfile().map_err(DelcaseErrorKind::UpdatingTestfileFailed)?;
 
     Ok(())
+}
+
+fn is_valid_id(id: &str) -> bool {
+    let alphanumeric = id.chars().all(|ch| ch.is_alphanumeric() || ch == '_');
+    let starts_with_alpha = id
+        .chars()
+        .next()
+        .map(|ch| ch.is_alphabetic())
+        .unwrap_or(false);
+
+    alphanumeric && starts_with_alpha
 }
 
 fn default_id(index: usize) -> String {

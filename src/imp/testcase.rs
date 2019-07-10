@@ -22,7 +22,7 @@ pub struct AddcaseError(#[fail(cause)] AddcaseErrorKind);
 #[derive(Debug, Fail)]
 pub enum AddcaseErrorKind {
     #[fail(
-        display = "Invalid id: `{}`\n\n  note: the id must be starts with an alphabet \
+        display = "Invalid id `{}`; the id must be starts with an alphabet \
                    and all of characters must be an alphanumeric or underscore '_'.",
         id
     )]
